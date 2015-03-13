@@ -146,12 +146,6 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	}
 
 otherwise:
-	do_list := false
-	if strings.HasPrefix(text, "-list") {
-		do_list = true
-		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
-	}
-
 	// Query i.bittwiddlers.org for the list of images:
 	list, err := queryBit()
 	if err != nil {
@@ -159,6 +153,33 @@ otherwise:
 		return nil
 	}
 
+	// -list prefix will list best matches instead of randomly selecting one:
+	do_list := false
+	if strings.HasPrefix(text, "-list") {
+		do_list = true
+		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
+
+		// Shortcut to list all images:
+		if text == "" {
+			out := new(bytes.Buffer)
+			if len(list) == 0 {
+				fmt.Fprintf(out, "No images!\n")
+			} else {
+				fmt.Fprintf(out, "All images:\n")
+				for _, img := range list {
+					if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
+						continue
+					}
+
+					fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
+				}
+			}
+			replyText(rsp, out.String())
+			return nil
+		}
+	}
+
+	// Runes used to split words:
 	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
 
 	// Search by keyword:
@@ -191,11 +212,14 @@ otherwise:
 		for _, keyword := range keywords {
 			for word_idx, word := range words {
 				if word == keyword {
-					h += 10
 					if last_word_idx > -1 {
-						// Penalize distance (word count) from last word found (helps phrases match better):
-						h -= ((word_idx - last_word_idx) + 1)
+						if word_idx > last_word_idx+1 {
+							// Penalize distance (word count) from last word found (helps phrases match better):
+							h -= ((word_idx - last_word_idx) + 1)
+						}
 					}
+
+					h += 10
 					h = (h * 20) / 16
 					last_word_idx = word_idx
 
@@ -222,10 +246,14 @@ otherwise:
 
 	if do_list {
 		out := new(bytes.Buffer)
-		fmt.Fprintf(out, "Best matches for '%s':\n", text)
-		for _, idx := range highest_idxs {
-			img := list[idx]
-			fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
+		if len(highest_idxs) == 0 {
+			fmt.Fprintf(out, "No matches for '%s'.\n", text)
+		} else {
+			fmt.Fprintf(out, "Best matches for '%s':\n", text)
+			for _, idx := range highest_idxs {
+				img := list[idx]
+				fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
+			}
 		}
 		replyText(rsp, out.String())
 		return nil
