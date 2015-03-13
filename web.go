@@ -12,25 +12,12 @@ import "github.com/JamesDunne/go-util/web"
 
 func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	if err := req.ParseForm(); err != nil {
-		log.Printf("Could not parse form: %s", err)
+		log.Printf("Could not parse form: %s\n", err)
 		return web.AsError(err, http.StatusBadRequest)
 	}
 
 	// TODO: validate 'token'
 	//req.PostForm.Get("token")
-
-	//	log.Println("Got form post:")
-	//	for name, values := range req.PostForm {
-	//		for _, value := range values {
-	//			log.Printf("  %s=%s\n", name, value)
-	//		}
-	//	}
-
-	// Prevent infinite echos:
-	if req.PostForm.Get("user_name") == "slackbot" {
-		rsp.WriteHeader(http.StatusOK)
-		return nil
-	}
 
 	// Don't accept messages not intended for us:
 	if req.PostForm.Get("trigger_word") != "bitsbot" {
@@ -38,11 +25,18 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		return nil
 	}
 
+	// Prevent infinite echos:
+	if req.PostForm.Get("user_name") == "slackbot" {
+		rsp.WriteHeader(http.StatusOK)
+		return nil
+	}
+
 	// Log incoming text:
 	log.Printf(
-		"#%s <%s>: %s\n",
+		"#%s <%s (%s)>: %s\n",
 		req.PostForm.Get("channel_name"),
 		req.PostForm.Get("user_name"),
+		req.PostForm.Get("user_id"),
 		req.PostForm.Get("text"),
 	)
 
@@ -53,33 +47,38 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
 	}
 
-	// Remove angle brackets around URLs:
-	text = strings.Replace(text, "<", "", -1)
-	text = strings.Replace(text, ">", "", -1)
-
 	// Text is HTML encoded otherwise.
 
-	if strings.HasPrefix(text, "json=") {
+	// Debug tool for user "jdunne":
+	if strings.HasPrefix(text, "json=") && req.PostForm.Get("user_id") == "U03PV154T" {
+		// Remove angle brackets around URLs:
+		text = strings.Replace(text, "<", "", -1)
+		text = strings.Replace(text, ">", "", -1)
+
+		// Unmarshal JSON:
 		o := make(map[string]interface{})
 		err := json.Unmarshal([]byte(text[len("json="):]), &o)
 		if err != nil {
 			log.Printf("ERROR: %s\n", err)
-			return nil
+			goto otherwise
 		}
 
 		// Echo incoming JSON data as our response:
 		rsp.Header().Set("Content-Type", "application/json")
 		rsp.WriteHeader(http.StatusOK)
 		json.NewEncoder(rsp).Encode(o)
-	} else {
-		// Echo back text:
-		rsp.Header().Set("Content-Type", "application/json")
-		rsp.WriteHeader(http.StatusOK)
-		json.NewEncoder(rsp).Encode(struct {
-			Text string `json:"text"`
-		}{
-			Text: text,
-		})
+		return nil
 	}
+
+otherwise:
+	// Echo back text:
+	rsp.Header().Set("Content-Type", "application/json")
+	rsp.WriteHeader(http.StatusOK)
+	json.NewEncoder(rsp).Encode(struct {
+		Text string `json:"text"`
+	}{
+		Text: text,
+	})
+
 	return nil
 }
