@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"log"
 	"math/rand"
@@ -36,7 +37,13 @@ func queryBit() (list []*ImageViewModel, err error) {
 
 	breq.Header.Set("Authorization", env["BIT_AUTH"])
 
-	brsp, err := http.DefaultClient.Do(breq)
+	// Skip bad self-signed x509 certificate:
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	client := &http.Client{Transport: tr}
+
+	brsp, err := client.Do(breq)
 	if err != nil {
 		log.Printf("ERROR: %s\n", err)
 		return nil, err
