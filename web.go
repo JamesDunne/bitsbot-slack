@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"html"
 	"log"
 	"math/rand"
 	"net/http"
@@ -94,7 +97,8 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	}
 
 	// Prevent infinite echos:
-	if req.PostForm.Get("user_name") == "slackbot" {
+	user_name := req.PostFormValue("user_name")
+	if user_name == "slackbot" {
 		rsp.WriteHeader(http.StatusOK)
 		return nil
 	}
@@ -103,7 +107,7 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	log.Printf(
 		"#%s <%s (%s)>: %s\n",
 		req.PostForm.Get("channel_name"),
-		req.PostForm.Get("user_name"),
+		user_name,
 		req.PostForm.Get("user_id"),
 		req.PostForm.Get("text"),
 	)
@@ -123,6 +127,9 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		text = strings.Replace(text, "<", "", -1)
 		text = strings.Replace(text, ">", "", -1)
 
+		// Decode HTML:
+		text = html.UnescapeString(text)
+
 		// Unmarshal JSON:
 		o := make(map[string]interface{})
 		err := json.Unmarshal([]byte(text[len("json="):]), &o)
@@ -139,6 +146,12 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	}
 
 otherwise:
+	do_list := false
+	if strings.HasPrefix(text, "-list") {
+		do_list = true
+		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
+	}
+
 	// Query i.bittwiddlers.org for the list of images:
 	list, err := queryBit()
 	if err != nil {
@@ -146,12 +159,14 @@ otherwise:
 		return nil
 	}
 
+	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
+
 	// Search by keyword:
 	keywords := strings.FieldsFunc(
 		strings.ToLower(text),
-		func(c rune) bool { return strings.ContainsRune(" \n\t:,;.[]!()$%^&*/<>'\"", c) },
+		func(c rune) bool { return strings.ContainsRune(wordSplitters, c) },
 	)
-	//log.Printf("  keywords: %v\n", keywords)
+	log.Printf("  keywords: %v\n", keywords)
 
 	highest := -1
 	highest_idxs := make([]int, 0, 20)
@@ -164,13 +179,15 @@ otherwise:
 
 		words := strings.FieldsFunc(
 			titleLower,
-			func(c rune) bool { return strings.ContainsRune(" \n\t:,;.[]!()$%^&*/<>'\"", c) },
+			func(c rune) bool { return strings.ContainsRune(wordSplitters, c) },
 		)
 
 		h := -2
 
 		// Add points for each keyword match:
 		last_word_idx := -1
+		// TODO(jsd): Don't count single-word matches on useless filler words like articles; only count them if in a phrase.
+		// TODO(jsd): Prefer to match all keywords.
 		for _, keyword := range keywords {
 			for word_idx, word := range words {
 				if word == keyword {
@@ -189,7 +206,7 @@ otherwise:
 		}
 
 		if h > -2 {
-			//log.Printf("  %4d %s\n", h, img.Title)
+			log.Printf("  %4d %s\n", h, img.Title)
 
 			if h > highest {
 				highest = h
@@ -203,20 +220,29 @@ otherwise:
 		}
 	}
 
+	if do_list {
+		out := new(bytes.Buffer)
+		fmt.Fprintf(out, "Best matches for '%s':\n", text)
+		for _, idx := range highest_idxs {
+			img := list[idx]
+			fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
+		}
+		replyText(rsp, out.String())
+		return nil
+	}
+
 	winning_idx := -1
 	if len(highest_idxs) == 0 {
-		//log.Printf("  No match!\n")
-		replyText(rsp, "No match")
-		return nil
+		log.Printf("  No match!\n")
 	} else if len(highest_idxs) == 1 {
-		//log.Printf("  Single match!\n")
+		log.Printf("  Single match!\n")
 		winning_idx = highest_idxs[0]
 	} else {
-		//log.Printf("  %d winners at %d score; randomly selecting a winner\n", len(highest_idxs), highest)
-		//for _, idx := range highest_idxs {
-		//	img := list[idx]
-		//	log.Printf("    %s\n", img.Title)
-		//}
+		log.Printf("  %d winners at score %d; randomly selecting a winner\n", len(highest_idxs), highest)
+		for _, idx := range highest_idxs {
+			img := list[idx]
+			log.Printf("    %s: %s\n", img.Base62ID, img.Title)
+		}
 
 		// Initialize a pseudo-random source:
 		timestamp := int64(0)
@@ -232,8 +258,13 @@ otherwise:
 		winning_idx = highest_idxs[r.Intn(len(highest_idxs))]
 	}
 
+	if winning_idx == -1 {
+		replyText(rsp, fmt.Sprintf("Sorry, %s, no match for '%s'.", user_name, text))
+		return nil
+	}
+
 	img := list[winning_idx]
-	//log.Printf("  %s\n", img.Title)
+	log.Printf("  winner: %s: %s\n", img.Base62ID, img.Title)
 
 	// Write JSON response with attached image:
 	rsp.Header().Set("Content-Type", "application/json")
@@ -260,6 +291,7 @@ otherwise:
 		},
 	})
 	//log.Printf("%s\n", string(o))
+
 	if err != nil {
 		log.Printf("ERROR: %s\n", err)
 		return nil
