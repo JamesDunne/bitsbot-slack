@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 //import "github.com/JamesDunne/go-util/base"
@@ -27,7 +30,7 @@ type ImageViewModel struct {
 
 func queryBit() (list []*ImageViewModel, err error) {
 	// Query i.bittwiddlers.org
-	breq, err := http.NewRequest("GET", "https://i.bittwiddlers.org/api/v1/list", nil)
+	breq, err := http.NewRequest("GET", "https://i.bittwiddlers.org/api/v1/all", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +58,14 @@ func queryBit() (list []*ImageViewModel, err error) {
 	)
 
 	return list, nil
+}
+
+func replyText(rsp http.ResponseWriter, text string) {
+	json.NewEncoder(rsp).Encode(struct {
+		Text string `json:"text"`
+	}{
+		Text: text,
+	})
 }
 
 func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
@@ -130,10 +141,15 @@ otherwise:
 		strings.ToLower(text),
 		func(c rune) bool { return strings.ContainsRune(" \n\t:,;.[]!()$%^&*/<>'\"", c) },
 	)
-	log.Printf("%v\n", keywords)
+	log.Printf("  keywords: %v\n", keywords)
 
-	highest, highest_idx := -1, -1
+	highest := -1
+	highest_idxs := make([]int, 0, 20)
 	for idx, img := range list {
+		if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
+			continue
+		}
+
 		titleLower := strings.ToLower(img.Title)
 
 		words := strings.FieldsFunc(
@@ -144,35 +160,70 @@ otherwise:
 		h := -2
 
 		// Add points for each keyword match:
+		last_word_idx := -1
 		for _, keyword := range keywords {
-			if strings.Contains(titleLower, keyword) {
-				h += 10
+			for word_idx, word := range words {
+				if word == keyword {
+					h += 10
+					if last_word_idx > -1 {
+						// Penalize distance (word count) from last word found (helps phrases match better):
+						h -= ((word_idx - last_word_idx) + 1)
+					}
+					h = (h * 20) / 16
+					last_word_idx = word_idx
+
+					// Only trigger once per keyword:
+					break
+				}
 			}
 		}
 
 		if h > -2 {
-			// Subtract points based on how many extra words there are:
-			h += (len(keywords) - len(words))
-			if h < 0 {
-				h = 0
+			log.Printf("  %4d %s\n", h, img.Title)
+
+			if h > highest {
+				highest = h
+				// Build a new list of winners at this index:
+				highest_idxs = highest_idxs[:0]
+				highest_idxs = append(highest_idxs, idx)
+			} else if h == highest {
+				// Add to the winning pool:
+				highest_idxs = append(highest_idxs, idx)
 			}
-
-			log.Printf("  %4d %s\n", h, titleLower)
-		}
-
-		if h > highest {
-			highest = h
-			highest_idx = idx
 		}
 	}
 
-	if highest_idx == -1 {
-		log.Printf("No match!\n")
+	winning_idx := -1
+	if len(highest_idxs) == 0 {
+		log.Printf("  No match!\n")
+		replyText(rsp, "No match")
 		return nil
+	} else if len(highest_idxs) == 1 {
+		log.Printf("  Single match!\n")
+		winning_idx = highest_idxs[0]
+	} else {
+		log.Printf("  %d winners at %d score; randomly selecting a winner\n", len(highest_idxs), highest)
+		for _, idx := range highest_idxs {
+			img := list[idx]
+			log.Printf("    %s\n", img.Title)
+		}
+
+		// Initialize a pseudo-random source:
+		timestamp := int64(0)
+		timestamp_float, err := strconv.ParseFloat(req.PostFormValue("timestamp"), 64)
+		if err != nil {
+			timestamp = time.Now().UnixNano()
+		} else {
+			timestamp = int64(timestamp_float)
+		}
+
+		// Select a random winner:
+		r := rand.New(rand.NewSource(timestamp))
+		winning_idx = highest_idxs[r.Intn(len(highest_idxs))]
 	}
 
-	log.Printf("HIT: %d, %d\n", highest_idx, highest)
-	img := list[highest_idx]
+	img := list[winning_idx]
+	log.Printf("  %s\n", img.Title)
 
 	// Write JSON response with attached image:
 	rsp.Header().Set("Content-Type", "application/json")
