@@ -53,13 +53,33 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
 	}
 
-	// Echo back text:
-	rsp.Header().Set("Content-Type", "application/json")
-	rsp.WriteHeader(http.StatusOK)
-	json.NewEncoder(rsp).Encode(struct {
-		Text string `json:"text"`
-	}{
-		Text: text,
-	})
+	// Remove angle brackets around URLs:
+	text = strings.Replace(text, "<", "", -1)
+	text = strings.Replace(text, ">", "", -1)
+
+	// Text is HTML encoded otherwise.
+
+	if strings.HasPrefix(text, "json=") {
+		o := make(map[string]interface{})
+		err := json.Unmarshal([]byte(text[len("json="):]), &o)
+		if err != nil {
+			log.Printf("ERROR: %s\n", err)
+			return nil
+		}
+
+		// Echo incoming JSON data as our response:
+		rsp.Header().Set("Content-Type", "application/json")
+		rsp.WriteHeader(http.StatusOK)
+		json.NewEncoder(rsp).Encode(o)
+	} else {
+		// Echo back text:
+		rsp.Header().Set("Content-Type", "application/json")
+		rsp.WriteHeader(http.StatusOK)
+		json.NewEncoder(rsp).Encode(struct {
+			Text string `json:"text"`
+		}{
+			Text: text,
+		})
+	}
 	return nil
 }
