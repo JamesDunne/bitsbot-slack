@@ -5,7 +5,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +34,8 @@ func queryBit() (list []*ImageViewModel, err error) {
 		return nil, err
 	}
 
-	breq.Header.Set("Authorization", os.Getenv("BIT_AUTH"))
+	breq.Header.Set("Authorization", env["BIT_AUTH"])
+
 	brsp, err := http.DefaultClient.Do(breq)
 	if err != nil {
 		log.Printf("ERROR: %s\n", err)
@@ -74,8 +74,11 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		return web.AsError(err, http.StatusBadRequest)
 	}
 
-	// TODO: validate 'token'
-	//req.PostForm.Get("token")
+	if req.PostForm.Get("token") != env["SLACK_TOKEN"] {
+		// Not meant for us.
+		rsp.WriteHeader(http.StatusOK)
+		return nil
+	}
 
 	// Don't accept messages not intended for us:
 	if req.PostForm.Get("trigger_word") != "bitsbot" {
@@ -90,13 +93,13 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	}
 
 	// Log incoming text:
-	//	log.Printf(
-	//		"#%s <%s (%s)>: %s\n",
-	//		req.PostForm.Get("channel_name"),
-	//		req.PostForm.Get("user_name"),
-	//		req.PostForm.Get("user_id"),
-	//		req.PostForm.Get("text"),
-	//	)
+	log.Printf(
+		"#%s <%s (%s)>: %s\n",
+		req.PostForm.Get("channel_name"),
+		req.PostForm.Get("user_name"),
+		req.PostForm.Get("user_id"),
+		req.PostForm.Get("text"),
+	)
 
 	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
 	// Strip "bitsbot" prefix off text:
@@ -203,10 +206,10 @@ otherwise:
 		winning_idx = highest_idxs[0]
 	} else {
 		//log.Printf("  %d winners at %d score; randomly selecting a winner\n", len(highest_idxs), highest)
-		//		for _, idx := range highest_idxs {
-		//			img := list[idx]
-		//			log.Printf("    %s\n", img.Title)
-		//		}
+		//for _, idx := range highest_idxs {
+		//	img := list[idx]
+		//	log.Printf("    %s\n", img.Title)
+		//}
 
 		// Initialize a pseudo-random source:
 		timestamp := int64(0)
