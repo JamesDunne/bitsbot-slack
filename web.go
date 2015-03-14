@@ -70,14 +70,6 @@ func queryBit() (list []*ImageViewModel, err error) {
 	return list, err
 }
 
-func jsonReplyText(text string) interface{} {
-	return &struct {
-		Text string `json:"text"`
-	}{
-		Text: text,
-	}
-}
-
 func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewModel) {
 	// Runes used to split words:
 	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
@@ -149,6 +141,14 @@ func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewMode
 		winners = append(winners, list[idx])
 	}
 	return
+}
+
+func jsonReplyText(text string) interface{} {
+	return &struct {
+		Text string `json:"text"`
+	}{
+		Text: text,
+	}
 }
 
 func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, werr *web.Error) {
@@ -326,6 +326,7 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		formValues["text"],
 	)
 
+	// Handle the chat message:
 	jsonResponse, werr := handleChatMessage(formValues)
 	if werr != nil {
 		return werr

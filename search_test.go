@@ -10,7 +10,7 @@ import (
 var bits_list []*ImageViewModel
 
 func Test_keywordSearch(t *testing.T) {
-	winners := keywordMatch("is", bits_list)
+	winners := keywordMatch("margarita time", bits_list)
 	if len(winners) == 0 {
 		t.Fail()
 	}
