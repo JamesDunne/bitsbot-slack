@@ -11,20 +11,9 @@ import (
 import "github.com/JamesDunne/go-util/base"
 import "github.com/JamesDunne/go-util/web"
 
-var requiredEnv []string = []string{
-	"BIT_AUTH",
-	"SLACK_TOKEN",
-}
 var env map[string]string
 
-func main() {
-	var fl_listen_uri string
-	flag.StringVar(&fl_listen_uri, "l", "tcp://0.0.0.0:8080", "Listen address")
-	flag.Parse()
-
-	listen_addr, err := base.ParseListenable(fl_listen_uri)
-	base.PanicIf(err)
-
+func parseEnv(requiredEnv []string) bool {
 	// Get required environment variables:
 	missing := make([]string, 0, len(requiredEnv))
 	env = make(map[string]string)
@@ -37,6 +26,20 @@ func main() {
 	}
 	if len(missing) > 0 {
 		log.Printf("Missing required environment variables: %v\n", missing)
+		return false
+	}
+	return true
+}
+
+func main() {
+	var fl_listen_uri string
+	flag.StringVar(&fl_listen_uri, "l", "tcp://0.0.0.0:8080", "Listen address")
+	flag.Parse()
+
+	listen_addr, err := base.ParseListenable(fl_listen_uri)
+	base.PanicIf(err)
+
+	if !parseEnv([]string{"BIT_AUTH", "SLACK_TOKEN"}) {
 		return
 	}
 

@@ -53,7 +53,7 @@ func queryBit() (list []*ImageViewModel, err error) {
 	}
 
 	list = make([]*ImageViewModel, 0, 1000)
-	json.NewDecoder(brsp.Body).Decode(
+	err = json.NewDecoder(brsp.Body).Decode(
 		&struct {
 			Result struct {
 				List *[]*ImageViewModel `json:"list"`
@@ -67,7 +67,7 @@ func queryBit() (list []*ImageViewModel, err error) {
 		},
 	)
 
-	return list, nil
+	return list, err
 }
 
 func jsonReplyText(text string) interface{} {
