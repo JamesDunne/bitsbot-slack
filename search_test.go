@@ -10,7 +10,7 @@ import (
 var bits_list []*ImageViewModel
 
 func Test_keywordSearch(t *testing.T) {
-	winners := keywordMatch("margarita time", bits_list)
+	winners := keywordMatch("", bits_list)
 	if len(winners) == 0 {
 		t.Fail()
 	}
@@ -20,6 +20,7 @@ func TestMain(m *testing.M) {
 	var err error
 	var jsonExists bool
 
+	// Load up JSON data if we can:
 	{
 		f, err := os.Open("bits.json")
 		if err == nil {
@@ -34,8 +35,8 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// Query i.bittwiddlers.org for the list of images (requires BIT_AUTH env set):
 	if bits_list == nil {
-		// Query i.bittwiddlers.org for the list of images:
 		if !parseEnv([]string{"BIT_AUTH"}) {
 			os.Exit(1)
 			return
@@ -46,6 +47,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
+	// Write JSON to file:
 	if !jsonExists {
 		f, err := os.OpenFile("bits.json", os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -55,5 +57,6 @@ func TestMain(m *testing.M) {
 		json.NewEncoder(f).Encode(bits_list)
 	}
 
+	// Run tests:
 	os.Exit(m.Run())
 }

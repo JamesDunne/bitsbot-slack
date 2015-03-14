@@ -71,6 +71,11 @@ func queryBit() (list []*ImageViewModel, err error) {
 }
 
 func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewModel) {
+	// No keywords means match all:
+	if text == "" {
+		return list
+	}
+
 	// Runes used to split words:
 	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
 
@@ -84,10 +89,6 @@ func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewMode
 	highest := -1
 	highest_idxs := make([]int, 0, 20)
 	for idx, img := range list {
-		if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
-			continue
-		}
-
 		titleLower := strings.ToLower(img.Title)
 
 		words := strings.FieldsFunc(
@@ -102,8 +103,11 @@ func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewMode
 		// TODO(jsd): Don't count single-word matches on useless filler words like articles; only count them if in a phrase.
 		// TODO(jsd): Prefer to match all keywords.
 		for _, keyword := range keywords {
+			found := false
 			for word_idx, word := range words {
 				if word == keyword {
+					found = true
+
 					if last_word_idx > -1 {
 						if word_idx > last_word_idx+1 {
 							// Penalize distance (word count) from last word found (helps phrases match better):
@@ -118,6 +122,12 @@ func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewMode
 					// Only trigger once per keyword:
 					break
 				}
+			}
+
+			// All keywords are required to match:
+			if !found {
+				h = -2
+				break
 			}
 		}
 
@@ -190,34 +200,24 @@ otherwise:
 		return nil, nil
 	}
 
+	// Filter list into images only; no youtube or gifv:
+	img_list := make([]*ImageViewModel, 0, len(list))
+	for _, img := range list {
+		if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
+			continue
+		}
+		img_list = append(img_list, img)
+	}
+
 	// -list prefix will list best matches instead of randomly selecting one:
 	do_list := false
 	if strings.HasPrefix(text, "-list") {
 		do_list = true
 		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
-
-		// Shortcut to list all images:
-		if text == "" {
-			out := new(bytes.Buffer)
-			if len(list) == 0 {
-				fmt.Fprintf(out, "No images!\n")
-			} else {
-				fmt.Fprintf(out, "All images:\n")
-				for _, img := range list {
-					if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
-						continue
-					}
-
-					fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
-				}
-			}
-
-			return jsonReplyText(out.String()), nil
-		}
 	}
 
 	// Keyword search through image titles and find best matches:
-	winners := keywordMatch(text, list)
+	winners := keywordMatch(text, img_list)
 
 	if do_list {
 		out := new(bytes.Buffer)
