@@ -70,51 +70,19 @@ func queryBit() (list []*ImageViewModel, err error) {
 	return list, nil
 }
 
-func replyText(rsp http.ResponseWriter, text string) {
-	json.NewEncoder(rsp).Encode(struct {
+func jsonReplyText(text string) interface{} {
+	return &struct {
 		Text string `json:"text"`
 	}{
 		Text: text,
-	})
+	}
 }
 
-func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
-	if err := req.ParseForm(); err != nil {
-		log.Printf("Could not parse form: %s\n", err)
-		return web.AsError(err, http.StatusBadRequest)
-	}
-
-	if req.PostForm.Get("token") != env["SLACK_TOKEN"] {
-		// Not meant for us.
-		rsp.WriteHeader(http.StatusOK)
-		return nil
-	}
-
-	// Don't accept messages not intended for us:
-	if req.PostForm.Get("trigger_word") != "bitsbot" {
-		rsp.WriteHeader(http.StatusOK)
-		return nil
-	}
-
-	// Prevent infinite echos:
-	user_name := req.PostFormValue("user_name")
-	if user_name == "slackbot" {
-		rsp.WriteHeader(http.StatusOK)
-		return nil
-	}
-
-	// Log incoming text:
-	log.Printf(
-		"#%s <%s (%s)>: %s\n",
-		req.PostForm.Get("channel_name"),
-		user_name,
-		req.PostForm.Get("user_id"),
-		req.PostForm.Get("text"),
-	)
+func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, werr *web.Error) {
 
 	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
 	// Strip "bitsbot" prefix off text:
-	text := strings.Trim(req.PostForm.Get("text"), " \t\n")
+	text := strings.Trim(formValues["text"], " \t\n")
 	if strings.HasPrefix(text, "bitsbot") {
 		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
 	}
@@ -122,7 +90,7 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	// Text is HTML encoded otherwise.
 
 	// Debug tool for user "jdunne":
-	if strings.HasPrefix(text, "json=") && req.PostForm.Get("user_id") == "U03PV154T" {
+	if strings.HasPrefix(text, "json=") && formValues["user_id"] == "U03PV154T" {
 		// Remove angle brackets around URLs:
 		text = strings.Replace(text, "<", "", -1)
 		text = strings.Replace(text, ">", "", -1)
@@ -139,10 +107,7 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		}
 
 		// Echo incoming JSON data as our response:
-		rsp.Header().Set("Content-Type", "application/json")
-		rsp.WriteHeader(http.StatusOK)
-		json.NewEncoder(rsp).Encode(o)
-		return nil
+		return o, nil
 	}
 
 otherwise:
@@ -150,7 +115,7 @@ otherwise:
 	list, err := queryBit()
 	if err != nil {
 		log.Printf("ERROR: %s\n", err)
-		return nil
+		return nil, nil
 	}
 
 	// -list prefix will list best matches instead of randomly selecting one:
@@ -174,8 +139,8 @@ otherwise:
 					fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
 				}
 			}
-			replyText(rsp, out.String())
-			return nil
+
+			return jsonReplyText(out.String()), nil
 		}
 	}
 
@@ -255,8 +220,7 @@ otherwise:
 				fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
 			}
 		}
-		replyText(rsp, out.String())
-		return nil
+		return jsonReplyText(out.String()), nil
 	}
 
 	winning_idx := -1
@@ -274,7 +238,7 @@ otherwise:
 
 		// Initialize a pseudo-random source:
 		timestamp := int64(0)
-		timestamp_float, err := strconv.ParseFloat(req.PostFormValue("timestamp"), 64)
+		timestamp_float, err := strconv.ParseFloat(formValues["timestamp"], 64)
 		if err != nil {
 			timestamp = time.Now().UnixNano()
 		} else {
@@ -287,17 +251,13 @@ otherwise:
 	}
 
 	if winning_idx == -1 {
-		replyText(rsp, fmt.Sprintf("Sorry, %s, no match for '%s'.", user_name, text))
-		return nil
+		return jsonReplyText(fmt.Sprintf("Sorry, %s, no match for '%s'.", formValues["user_name"], text)), nil
 	}
 
 	img := list[winning_idx]
 	log.Printf("  winner: %s: %s\n", img.Base62ID, img.Title)
 
-	// Write JSON response with attached image:
-	rsp.Header().Set("Content-Type", "application/json")
-	rsp.WriteHeader(http.StatusOK)
-	o, err := json.Marshal(struct {
+	return &struct {
 		Text        string `json:"text"`
 		Attachments []struct {
 			Fallback string `json:"fallback"`
@@ -317,13 +277,64 @@ otherwise:
 				ImageURL: "http://i.bittwiddlers.org" + img.ImageURL,
 			},
 		},
-	})
-	//log.Printf("%s\n", string(o))
+	}, nil
+}
 
+func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
+	if err := req.ParseForm(); err != nil {
+		log.Printf("Could not parse form: %s\n", err)
+		return web.AsError(err, http.StatusBadRequest)
+	}
+
+	formValues := make(map[string]string)
+	for key, values := range req.PostForm {
+		formValues[key] = strings.Join(values, " ")
+	}
+
+	if formValues["token"] != env["SLACK_TOKEN"] {
+		// Not meant for us.
+		rsp.WriteHeader(http.StatusOK)
+		return nil
+	}
+
+	// Don't accept messages not intended for us:
+	if formValues["trigger_word"] != "bitsbot" {
+		rsp.WriteHeader(http.StatusOK)
+		return nil
+	}
+
+	// Prevent infinite echos:
+	user_name := formValues["user_name"]
+	if user_name == "slackbot" {
+		rsp.WriteHeader(http.StatusOK)
+		return nil
+	}
+
+	// Log incoming text:
+	log.Printf(
+		"#%s <%s (%s)>: %s\n",
+		formValues["channel_name"],
+		user_name,
+		formValues["user_id"],
+		formValues["text"],
+	)
+
+	jsonResponse, werr := handleChatMessage(formValues)
+	if werr != nil {
+		return werr
+	}
+
+	// Write JSON response with attached image:
+	rsp.Header().Set("Content-Type", "application/json")
+	rsp.WriteHeader(http.StatusOK)
+
+	o, err := json.Marshal(jsonResponse)
 	if err != nil {
 		log.Printf("ERROR: %s\n", err)
 		return nil
 	}
+
+	//log.Printf("%s\n", string(o))
 	rsp.Write(o)
 
 	return nil
