@@ -78,72 +78,7 @@ func jsonReplyText(text string) interface{} {
 	}
 }
 
-func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, werr *web.Error) {
-
-	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
-	// Strip "bitsbot" prefix off text:
-	text := strings.Trim(formValues["text"], " \t\n")
-	if strings.HasPrefix(text, "bitsbot") {
-		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
-	}
-
-	// Text is HTML encoded otherwise.
-
-	// Debug tool for user "jdunne":
-	if strings.HasPrefix(text, "json=") && formValues["user_id"] == "U03PV154T" {
-		// Remove angle brackets around URLs:
-		text = strings.Replace(text, "<", "", -1)
-		text = strings.Replace(text, ">", "", -1)
-
-		// Decode HTML:
-		text = html.UnescapeString(text)
-
-		// Unmarshal JSON:
-		o := make(map[string]interface{})
-		err := json.Unmarshal([]byte(text[len("json="):]), &o)
-		if err != nil {
-			log.Printf("ERROR: %s\n", err)
-			goto otherwise
-		}
-
-		// Echo incoming JSON data as our response:
-		return o, nil
-	}
-
-otherwise:
-	// Query i.bittwiddlers.org for the list of images:
-	list, err := queryBit()
-	if err != nil {
-		log.Printf("ERROR: %s\n", err)
-		return nil, nil
-	}
-
-	// -list prefix will list best matches instead of randomly selecting one:
-	do_list := false
-	if strings.HasPrefix(text, "-list") {
-		do_list = true
-		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
-
-		// Shortcut to list all images:
-		if text == "" {
-			out := new(bytes.Buffer)
-			if len(list) == 0 {
-				fmt.Fprintf(out, "No images!\n")
-			} else {
-				fmt.Fprintf(out, "All images:\n")
-				for _, img := range list {
-					if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
-						continue
-					}
-
-					fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
-				}
-			}
-
-			return jsonReplyText(out.String()), nil
-		}
-	}
-
+func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewModel) {
 	// Runes used to split words:
 	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
 
@@ -209,30 +144,103 @@ otherwise:
 		}
 	}
 
+	winners = make([]*ImageViewModel, 0, len(highest_idxs))
+	for _, idx := range highest_idxs {
+		winners = append(winners, list[idx])
+	}
+	return
+}
+
+func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, werr *web.Error) {
+	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
+	// Strip "bitsbot" prefix off text:
+	text := strings.Trim(formValues["text"], " \t\n")
+	if strings.HasPrefix(text, "bitsbot") {
+		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
+	}
+
+	// Text is HTML encoded otherwise.
+
+	// Debug tool for user "jdunne":
+	if strings.HasPrefix(text, "json=") && formValues["user_id"] == "U03PV154T" {
+		// Remove angle brackets around URLs:
+		text = strings.Replace(text, "<", "", -1)
+		text = strings.Replace(text, ">", "", -1)
+
+		// Decode HTML:
+		text = html.UnescapeString(text)
+
+		// Unmarshal JSON:
+		o := make(map[string]interface{})
+		err := json.Unmarshal([]byte(text[len("json="):]), &o)
+		if err != nil {
+			log.Printf("ERROR: %s\n", err)
+			goto otherwise
+		}
+
+		// Echo incoming JSON data as our response:
+		return o, nil
+	}
+
+otherwise:
+	// Query i.bittwiddlers.org for the list of images:
+	list, err := queryBit()
+	if err != nil {
+		log.Printf("ERROR: %s\n", err)
+		return nil, nil
+	}
+
+	// -list prefix will list best matches instead of randomly selecting one:
+	do_list := false
+	if strings.HasPrefix(text, "-list") {
+		do_list = true
+		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
+
+		// Shortcut to list all images:
+		if text == "" {
+			out := new(bytes.Buffer)
+			if len(list) == 0 {
+				fmt.Fprintf(out, "No images!\n")
+			} else {
+				fmt.Fprintf(out, "All images:\n")
+				for _, img := range list {
+					if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
+						continue
+					}
+
+					fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
+				}
+			}
+
+			return jsonReplyText(out.String()), nil
+		}
+	}
+
+	// Keyword search through image titles and find best matches:
+	winners := keywordMatch(text, list)
+
 	if do_list {
 		out := new(bytes.Buffer)
-		if len(highest_idxs) == 0 {
+		if len(winners) == 0 {
 			fmt.Fprintf(out, "No matches for '%s'.\n", text)
 		} else {
 			fmt.Fprintf(out, "Best matches for '%s':\n", text)
-			for _, idx := range highest_idxs {
-				img := list[idx]
+			for _, img := range winners {
 				fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
 			}
 		}
 		return jsonReplyText(out.String()), nil
 	}
 
-	winning_idx := -1
-	if len(highest_idxs) == 0 {
+	img := (*ImageViewModel)(nil)
+	if len(winners) == 0 {
 		log.Printf("  No match!\n")
-	} else if len(highest_idxs) == 1 {
+	} else if len(winners) == 1 {
 		log.Printf("  Single match!\n")
-		winning_idx = highest_idxs[0]
+		img = winners[0]
 	} else {
-		log.Printf("  %d winners at score %d; randomly selecting a winner\n", len(highest_idxs), highest)
-		for _, idx := range highest_idxs {
-			img := list[idx]
+		log.Printf("  %d winners at score %d; randomly selecting a winner\n", len(winners))
+		for _, img := range winners {
 			log.Printf("    %s: %s\n", img.Base62ID, img.Title)
 		}
 
@@ -247,14 +255,13 @@ otherwise:
 
 		// Select a random winner:
 		r := rand.New(rand.NewSource(timestamp))
-		winning_idx = highest_idxs[r.Intn(len(highest_idxs))]
+		img = winners[r.Intn(len(winners))]
 	}
 
-	if winning_idx == -1 {
+	if img == nil {
 		return jsonReplyText(fmt.Sprintf("Sorry, %s, no match for '%s'.", formValues["user_name"], text)), nil
 	}
 
-	img := list[winning_idx]
 	log.Printf("  winner: %s: %s\n", img.Base62ID, img.Title)
 
 	return &struct {
