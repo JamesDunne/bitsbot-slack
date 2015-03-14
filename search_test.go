@@ -9,8 +9,15 @@ import (
 
 var bits_list []*ImageViewModel
 
-func Test_keywordSearch(t *testing.T) {
+func TestKeywordMatchEmpty(t *testing.T) {
 	winners := keywordMatch("", bits_list)
+	if len(winners) == 0 {
+		t.Fail()
+	}
+}
+
+func TestKeywordMatchArticles(t *testing.T) {
+	winners := keywordMatch("an", bits_list)
 	if len(winners) == 0 {
 		t.Fail()
 	}
