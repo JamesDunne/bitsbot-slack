@@ -2,11 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 )
 
+import "github.com/JamesDunne/go-util/base"
 import "github.com/JamesDunne/go-util/web"
 
 // Webhook server for Outgoing Webhook integration with Slack.
@@ -69,4 +72,25 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 	rsp.Write(o)
 
 	return nil
+}
+
+func mainWebhookServer() error {
+	var fl_listen_uri string
+	flag.StringVar(&fl_listen_uri, "l", "tcp://0.0.0.0:8080", "Listen address")
+	flag.Parse()
+
+	listen_addr, err := base.ParseListenable(fl_listen_uri)
+	base.PanicIf(err)
+
+	if err := parseEnv([]string{"BIT_AUTH", "SLACK_TOKEN"}); err != nil {
+		return err
+	}
+
+	// Start the webhook server:
+	_, err = base.ServeMain(listen_addr, func(l net.Listener) error {
+		return http.Serve(l, web.ReportErrors(web.Log(web.DefaultErrorLog, web.ErrorHandlerFunc(processRequest))))
+	})
+
+	// Return any error:
+	return err
 }
