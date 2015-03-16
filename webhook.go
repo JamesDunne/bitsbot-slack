@@ -43,14 +43,23 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		return nil
 	}
 
+	text := formValues["text"]
+	text = strings.Trim(text, " \t\n")
+
 	// Log incoming text:
 	log.Printf(
 		"#%s <%s (%s)>: %s\n",
 		formValues["channel_name"],
 		user_name,
 		formValues["user_id"],
-		formValues["text"],
+		text,
 	)
+
+	// Strip "bitsbot" prefix off text:
+	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
+	if strings.HasPrefix(text, "bitsbot") {
+		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
+	}
 
 	// Convert formValues into SlackInMessage:
 	slackMessage := &SlackInMessage{
@@ -58,7 +67,7 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		UserName:    user_name,
 		ChannelID:   formValues["channel_id"],
 		ChannelName: formValues["channel_name"],
-		Text:        formValues["text"],
+		Text:        text,
 		Timestamp:   formValues["timestamp"],
 	}
 

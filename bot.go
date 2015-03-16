@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"math/rand"
 	"net/http"
@@ -16,15 +15,6 @@ import (
 
 //import "github.com/JamesDunne/go-util/base"
 import "github.com/JamesDunne/go-util/web"
-
-type SlackInMessage struct {
-	Text        string `json:"text"`
-	UserID      string `json:"user"`
-	UserName    string
-	ChannelID   string `json:"channel"`
-	ChannelName string
-	Timestamp   string `json:"ts"`
-}
 
 // from i.bittwiddlers.org
 type ImageViewModel struct {
@@ -163,50 +153,17 @@ func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewMode
 	return
 }
 
-func jsonReplyText(text string) interface{} {
-	return &struct {
-		Text string `json:"text"`
-	}{
+func textReply(text string) *SlackOutMessage {
+	return &SlackOutMessage{
 		Text: text,
 	}
 }
 
-func botHandleMessage(msg *SlackInMessage) (jsonResponse interface{}, werr *web.Error) {
-	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
-	// Strip "bitsbot" prefix off text:
-	text := strings.Trim(msg.Text, " \t\n")
-	if strings.HasPrefix(text, "bitsbot") {
-		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
-	}
-
-	// Text is HTML encoded otherwise.
-
-	// Debug tool for user "jdunne":
-	if strings.HasPrefix(text, "json=") && msg.UserID == "U03PV154T" {
-		// Remove angle brackets around URLs:
-		text = strings.Replace(text, "<", "", -1)
-		text = strings.Replace(text, ">", "", -1)
-
-		// Decode HTML:
-		text = html.UnescapeString(text)
-
-		// Unmarshal JSON:
-		o := make(map[string]interface{})
-		err := json.Unmarshal([]byte(text[len("json="):]), &o)
-		if err != nil {
-			log.Printf("ERROR: %s\n", err)
-			goto otherwise
-		}
-
-		// Echo incoming JSON data as our response:
-		return o, nil
-	}
-
-otherwise:
+func botHandleMessage(msg *SlackInMessage) (*SlackOutMessage, *web.Error) {
 	// Query i.bittwiddlers.org for the list of images:
 	list, err := queryBit()
 	if err != nil {
-		log.Printf("ERROR: %s\n", err)
+		log.Printf("bittwiddlers query ERROR: %s\n", err)
 		return nil, nil
 	}
 
@@ -218,6 +175,8 @@ otherwise:
 		}
 		img_list = append(img_list, img)
 	}
+
+	text := msg.Text
 
 	// -list prefix will list best matches instead of randomly selecting one:
 	do_list := false
@@ -239,7 +198,7 @@ otherwise:
 				fmt.Fprintf(out, " * <http://i.bittwiddlers.org/b/%s|%s>\n", img.Base62ID, img.Title)
 			}
 		}
-		return jsonReplyText(out.String()), nil
+		return textReply(out.String()), nil
 	}
 
 	img := (*ImageViewModel)(nil)
@@ -249,7 +208,7 @@ otherwise:
 		log.Printf("  Single match!\n")
 		img = winners[0]
 	} else {
-		log.Printf("  %d winners at score %d; randomly selecting a winner\n", len(winners))
+		log.Printf("  %d winners; randomly selecting a winner\n", len(winners))
 		for _, img := range winners {
 			log.Printf("    %s: %s\n", img.Base62ID, img.Title)
 		}
@@ -269,27 +228,15 @@ otherwise:
 	}
 
 	if img == nil {
-		return jsonReplyText(fmt.Sprintf("Sorry, %s, no match for '%s'.", msg.UserName, text)), nil
+		return textReply(fmt.Sprintf("Sorry, %s, no match for '%s'.", msg.UserName, text)), nil
 	}
 
 	log.Printf("  winner: %s: %s\n", img.Base62ID, img.Title)
 
-	return &struct {
-		Text        string `json:"text"`
-		Attachments []struct {
-			Fallback string `json:"fallback"`
-			ImageURL string `json:"image_url"`
-		} `json:"attachments"`
-	}{
+	return &SlackOutMessage{
 		Text: img.Title,
-		Attachments: []struct {
-			Fallback string `json:"fallback"`
-			ImageURL string `json:"image_url"`
-		}{
-			struct {
-				Fallback string `json:"fallback"`
-				ImageURL string `json:"image_url"`
-			}{
+		Attachments: []SlackMessageAttachment{
+			SlackMessageAttachment{
 				Fallback: img.Title,
 				ImageURL: "http://i.bittwiddlers.org" + img.ImageURL,
 			},

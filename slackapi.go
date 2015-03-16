@@ -7,6 +7,24 @@ import (
 	"net/url"
 )
 
+type SlackInMessage struct {
+	Text        string `json:"text"`
+	UserID      string `json:"user"`
+	UserName    string
+	ChannelID   string `json:"channel"`
+	ChannelName string
+	Timestamp   string `json:"ts"`
+}
+
+type SlackMessageAttachment struct {
+	Fallback string `json:"fallback"`
+	ImageURL string `json:"image_url"`
+}
+type SlackOutMessage struct {
+	Text        string                   `json:"text"`
+	Attachments []SlackMessageAttachment `json:"attachments,omitempty"`
+}
+
 func slackAPI(method string, params map[string]string) (map[string]interface{}, error) {
 	// Format URL:
 	u := fmt.Sprintf("https://slack.com/api/%s?token=%s", method, url.QueryEscape(env["SLACK_TOKEN"]))

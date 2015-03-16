@@ -44,7 +44,7 @@ func TestMain(m *testing.M) {
 
 	// Query i.bittwiddlers.org for the list of images (requires BIT_AUTH env set):
 	if bits_list == nil {
-		if !parseEnv([]string{"BIT_AUTH"}) {
+		if err = parseEnv([]string{"BIT_AUTH"}); err != nil {
 			os.Exit(1)
 			return
 		}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -19,31 +20,54 @@ type BotConnection struct {
 
 	user_names    map[string]string
 	channel_names map[string]string
+
+	message_id uint32
+}
+
+func (bc *BotConnection) SendReceive(msg interface{}) (rsp map[string]interface{}, err error) {
+	// Send:
+	err = websocket.JSON.Send(bc.ws, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Receive response:
+	rsp = make(map[string]interface{})
+	err = websocket.JSON.Receive(bc.ws, &rsp)
+	if err != nil {
+		return nil, err
+	}
+
+	return rsp, nil
 }
 
 // Send a ping every 15 seconds to avoid EOFs.
 func (bc *BotConnection) pingpong() {
-	defer bc.waitGroup.Done()
+	defer func() {
+		log.Println("  pingpong: dying")
+		bc.waitGroup.Done()
+	}()
 
 	ticker := time.Tick(time.Second * 15)
 
 	alive := true
 	for alive {
 		select {
-		case <-ticker:
+		case _ = <-ticker:
 			ping := struct {
 				Type string `json:"type"`
 			}{
 				Type: "ping",
 			}
-			//log.Println("pingpong: send ping")
+			//log.Println("  pingpong: ping")
+
 			err := websocket.JSON.Send(bc.ws, &ping)
 			if err != nil {
-				log.Println(err)
+				log.Printf("  pingpong: JSON send error: %s\n", err)
+				break
 			}
 			break
-		case <-bc.die:
-			log.Println("pingpong: dying")
+		case _ = <-bc.die:
 			alive = false
 			break
 		}
@@ -93,7 +117,39 @@ func (bc *BotConnection) resolveChannelName(channelID string) string {
 	return channelName
 }
 
-// goroutine to handle incoming messages:
+func divideMessage(msg string, divider int) (msgs []string) {
+	if len(msg) <= divider {
+		return []string{msg}
+	}
+
+	msgs = make([]string, 0, len(msg)/divider+1)
+
+	// t is remaining chars to cut
+	t := msg
+
+	for len(t) > divider {
+		n := divider
+		cut := t[:n]
+		// Pull back on cut to find last \n:
+		if m := strings.LastIndexAny(cut, "\n"); m > -1 {
+			n = m + 1
+			cut = t[:n]
+		}
+
+		// Add the cut:
+		msgs = append(msgs, cut)
+		t = t[n:]
+	}
+
+	// Add remainder:
+	if len(t) > 0 {
+		msgs = append(msgs, t)
+	}
+
+	return
+}
+
+// Handle incoming messages:
 func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 	msg := *wsInMessage
 
@@ -101,36 +157,85 @@ func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 	msgType := msg["type"]
 	switch msgType {
 	case "message":
+		subtype := msg["subtype"]
+		inmsg := &SlackInMessage{}
+
+		text := ""
+		//log.Printf("message: %+v\n", msg)
+
+		if subtype != nil {
+			// Handle edited messages:
+			if subtype == "message_changed" {
+				edited_msg := msg["message"].(map[string]interface{})
+
+				inmsg.UserID = edited_msg["user"].(string)
+				inmsg.Timestamp = edited_msg["ts"].(string)
+
+				text = edited_msg["text"].(string)
+			} else if subtype == "bot_message" {
+				// Skip bot messages.
+				break
+			}
+		} else {
+			// Regular message:
+			inmsg.UserID = msg["user"].(string)
+			inmsg.Timestamp = msg["ts"].(string)
+
+			text = msg["text"].(string)
+		}
+
 		// Ignore messages not sent directly to this bot:
-		text := msg["text"].(string)
 		if !strings.HasPrefix(text, bot_tag) {
 			break
 		}
 
-		// Handle chat message:
-		slackMessage := &SlackInMessage{
-			UserID:    msg["user"].(string),
-			ChannelID: msg["channel"].(string),
-			Text:      text,
-			Timestamp: msg["ts"].(string),
-		}
+		// Chop off tag at left:
+		text = strings.TrimLeft(text[len(bot_tag):], " :\t\n")
+		inmsg.Text = text
+		inmsg.ChannelID = msg["channel"].(string)
 
 		// Resolve user name and channel name:
-		slackMessage.UserName = bc.resolveUserName(slackMessage.UserID)
-		slackMessage.ChannelName = bc.resolveChannelName(slackMessage.ChannelID)
+		inmsg.UserName = bc.resolveUserName(inmsg.UserID)
+		inmsg.ChannelName = bc.resolveChannelName(inmsg.ChannelID)
 
-		log.Printf("  #%s <%s>: %s\n", slackMessage.ChannelID, slackMessage.UserID, slackMessage.Text)
+		log.Printf("  #%s (%s) <%s (%s)>::  %s\n",
+			inmsg.ChannelName, inmsg.ChannelID,
+			inmsg.UserName, inmsg.UserID,
+			inmsg.Text,
+		)
 
 		// Let the bot do its thing:
-		rsp, err := botHandleMessage(slackMessage)
-		if err != nil {
-			log.Println(err)
+		outmsg, werr := botHandleMessage(inmsg)
+		if werr != nil {
+			log.Printf("  incoming: botHandleMessage ERROR: %s\n", werr)
 			break
 		}
 
-		// TODO: Break up response text if 16k JSON limit hit.
+		// Subdivide message:
+		msgs := divideMessage(outmsg.Text, 4000)
 
-		websocket.JSON.Send(bc.ws, rsp)
+		// Send all messages:
+		for _, outtext := range msgs {
+			params := map[string]string{
+				"as_user": "true",
+				"channel": inmsg.ChannelID,
+				"text":    outtext,
+			}
+			if outmsg.Attachments != nil {
+				b, err := json.Marshal(outmsg.Attachments)
+				if err != nil {
+					log.Printf("  incoming: JSON marshal error: %s\n", err)
+					break
+				}
+				params["attachments"] = string(b)
+			}
+			_, err := slackAPI("chat.postMessage", params)
+			if err != nil {
+				log.Printf("  incoming: chat.postMessage error: %s\n", err)
+				break
+			}
+		}
+
 		break
 
 	// Ignore these kinds:
@@ -145,7 +250,7 @@ func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 // Read incoming messages:
 func (bc *BotConnection) readIncomingMessages() {
 	defer func() {
-		log.Println("incoming: dying")
+		log.Println("  incoming: dying")
 		bc.die <- true
 		bc.waitGroup.Done()
 	}()
@@ -168,7 +273,7 @@ func (bc *BotConnection) readIncomingMessages() {
 		}
 
 		// Handle the message:
-		go bc.handleMessage(&wsInMessage)
+		bc.handleMessage(&wsInMessage)
 	}
 }
 
@@ -215,7 +320,7 @@ func mainWebsocketClient() error {
 	//flag.Parse()
 
 	// Get sensitive information from environment variables:
-	if err := parseEnv([]string{ /*"BIT_AUTH", */ "SLACK_TOKEN", "BOT_USERID"}); err != nil {
+	if err := parseEnv([]string{"BIT_AUTH", "SLACK_TOKEN", "BOT_USERID"}); err != nil {
 		return err
 	}
 
