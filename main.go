@@ -25,10 +25,6 @@ func parseEnv(requiredEnv []string) error {
 	return nil
 }
 
-func mainWebsocketClient() error {
-	return nil
-}
-
 func main() {
 	err := mainWebsocketClient()
 	if err != nil {
