@@ -43,7 +43,7 @@ func main() {
 		return
 	}
 
-	// Start the server:
+	// Start the webhook server:
 	_, err = base.ServeMain(listen_addr, func(l net.Listener) error {
 		return http.Serve(l, web.ReportErrors(web.Log(web.DefaultErrorLog, web.ErrorHandlerFunc(processRequest))))
 	})
