@@ -51,20 +51,24 @@ func (bc *BotConnection) pingpong() {
 
 type wsInMessage map[string]interface{}
 
+// goroutine to handle incoming messages:
 func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 	msg := *wsInMessage
 
 	// Handle messages based on type:
 	msgType := msg["type"]
 	switch msgType {
-	// Ignore these kinds:
-	case "pong", "user_typing", "presence_change":
-		break
 	// Handle chat message:
 	case "message":
+		channel_id := msg["channel"]
 		user_id := msg["user"]
 		text := msg["text"]
-		log.Printf("  <%s>: %s\n", user_id, text)
+
+		log.Printf("  #%s <%s>: %s\n", channel_id, user_id, text)
+		break
+
+	// Ignore these kinds:
+	case "pong", "user_typing", "presence_change":
 		break
 	default:
 		log.Printf("  type '%s': %+v\n", msgType, msg)
