@@ -15,13 +15,16 @@ type BotConnection struct {
 	ws        *websocket.Conn
 	die       chan bool
 	waitGroup *sync.WaitGroup
+
+	// Map of user_ids to usernames:
+	user_names map[string]string
 }
 
-// Send a ping every 10 seconds to avoid EOFs.
+// Send a ping every 15 seconds to avoid EOFs.
 func (bc *BotConnection) pingpong() {
 	defer bc.waitGroup.Done()
 
-	ticker := time.Tick(time.Second * 10)
+	ticker := time.Tick(time.Second * 15)
 
 	alive := true
 	for alive {
@@ -32,7 +35,7 @@ func (bc *BotConnection) pingpong() {
 			}{
 				Type: "ping",
 			}
-			log.Println("pingpong: send ping")
+			//log.Println("pingpong: send ping")
 			err := websocket.JSON.Send(bc.ws, &ping)
 			if err != nil {
 				log.Println(err)
@@ -46,6 +49,29 @@ func (bc *BotConnection) pingpong() {
 	}
 }
 
+type wsInMessage map[string]interface{}
+
+func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
+	msg := *wsInMessage
+
+	// Handle messages based on type:
+	msgType := msg["type"]
+	switch msgType {
+	// Ignore these kinds:
+	case "pong", "user_typing", "presence_change":
+		break
+	// Handle chat message:
+	case "message":
+		user_id := msg["user"]
+		text := msg["text"]
+		log.Printf("  <%s>: %s\n", user_id, text)
+		break
+	default:
+		log.Printf("  type '%s': %+v\n", msgType, msg)
+		break
+	}
+}
+
 // Read incoming messages:
 func (bc *BotConnection) readIncomingMessages() {
 	defer func() {
@@ -54,12 +80,9 @@ func (bc *BotConnection) readIncomingMessages() {
 		bc.waitGroup.Done()
 	}()
 
-	// Handle incoming messages:
 	for {
-		log.Println("  Awaiting incoming message")
-
 		// Receive a message:
-		wsInMessage := make(map[string]interface{})
+		wsInMessage := make(wsInMessage)
 		err := websocket.JSON.Receive(bc.ws, &wsInMessage)
 
 		// Handle connection errors:
@@ -74,13 +97,8 @@ func (bc *BotConnection) readIncomingMessages() {
 			continue
 		}
 
-		// Handle messages based on type:
-		msgType := wsInMessage["type"]
-		switch msgType {
-		default:
-			log.Printf("  %s: %s\n", msgType, wsInMessage)
-			break
-		}
+		// Handle the message:
+		go bc.handleMessage(&wsInMessage)
 	}
 }
 
@@ -140,7 +158,7 @@ func mainWebsocketClient() error {
 	//flag.Parse()
 
 	// Get sensitive information from environment variables:
-	if err := parseEnv([]string{ /*"BIT_AUTH", */ "SLACK_TOKEN"}); err != nil {
+	if err := parseEnv([]string{ /*"BIT_AUTH", */ "SLACK_TOKEN", "BOT_USERID"}); err != nil {
 		return err
 	}
 
