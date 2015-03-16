@@ -5,9 +5,79 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
+	"time"
 )
 
 import "golang.org/x/net/websocket"
+
+type BotConnection struct {
+	ws        *websocket.Conn
+	die       chan bool
+	waitGroup sync.WaitGroup
+}
+
+// Send a ping every 30 seconds to avoid EOF after 1 minute.
+func (bc *BotConnection) pingpong() {
+	defer bc.waitGroup.Done()
+
+	ticker := time.Tick(time.Second * 30)
+
+	alive := true
+	for alive {
+		select {
+		case <-ticker:
+			ping := struct {
+				Type string `json:"type"`
+			}{
+				Type: "ping",
+			}
+			err := websocket.JSON.Send(bc.ws, &ping)
+			if err != nil {
+				log.Println(err)
+			}
+			break
+		case <-bc.die:
+			alive = false
+			break
+		}
+	}
+}
+
+// Read incoming messages:
+func (bc *BotConnection) readIncomingMessages() {
+	defer func() { bc.die <- true }()
+	defer bc.waitGroup.Done()
+
+	// Handle incoming messages:
+	for {
+		log.Println("  Awaiting incoming message")
+
+		// Receive a message:
+		wsInMessage := make(map[string]interface{})
+		err := websocket.JSON.Receive(bc.ws, &wsInMessage)
+
+		// Handle connection errors:
+		if err != nil {
+			log.Println(err)
+			break
+		}
+
+		// Handle semantic errors:
+		if errJson, ok := wsInMessage["error"]; ok {
+			log.Println(errJson)
+			continue
+		}
+
+		// Handle messages based on type:
+		msgType := wsInMessage["type"]
+		switch msgType {
+		default:
+			log.Printf("  %s: %s\n", msgType, wsInMessage)
+			break
+		}
+	}
+}
 
 func watchdog() {
 	for {
@@ -39,41 +109,24 @@ func watchdog() {
 
 		// Dial websocket:
 		log.Printf("Dialing websocket '%s'\n", wsURLResponse.URL)
-		ws, err := websocket.Dial(wsURLResponse.URL, "", "")
+		ws, err := websocket.Dial(wsURLResponse.URL, "", "http://localhost/")
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 
-		// Handle incoming messages:
 		log.Println("Connected to Slack websocket.")
-		for {
-			log.Println("  Awaiting incoming message")
 
-			// Receive a message:
-			wsInMessage := make(map[string]interface{})
-			err = websocket.JSON.Receive(ws, &wsInMessage)
-
-			// Handle connection errors:
-			if err != nil {
-				log.Println(err)
-				break
-			}
-
-			// Handle semantic errors:
-			if errJson, ok := wsInMessage["error"]; ok {
-				log.Println(errJson)
-				continue
-			}
-
-			// Handle messages based on type:
-			msgType := wsInMessage["type"]
-			switch msgType {
-			default:
-				log.Printf("  %s: %s\n", msgType, wsInMessage)
-				break
-			}
+		bc := &BotConnection{
+			ws: ws,
 		}
+
+		bc.waitGroup.Add(2)
+		go bc.pingpong()
+		go bc.readIncomingMessages()
+
+		// wait for goroutines:
+		bc.waitGroup.Wait()
 	}
 }
 
