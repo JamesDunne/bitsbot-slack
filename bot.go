@@ -17,6 +17,16 @@ import (
 //import "github.com/JamesDunne/go-util/base"
 import "github.com/JamesDunne/go-util/web"
 
+type SlackInMessage struct {
+	Text        string `json:"text"`
+	UserID      string `json:"user"`
+	UserName    string
+	ChannelID   string `json:"channel"`
+	ChannelName string
+	Timestamp   string `json:"ts"`
+}
+
+// from i.bittwiddlers.org
 type ImageViewModel struct {
 	ID             int64   `json:"id"`
 	Base62ID       string  `json:"base62id"`
@@ -161,10 +171,10 @@ func jsonReplyText(text string) interface{} {
 	}
 }
 
-func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, werr *web.Error) {
+func botHandleMessage(msg *SlackInMessage) (jsonResponse interface{}, werr *web.Error) {
 	// NOTE(jsd): "@bitsbot" does not trigger with outgoing webhooks via trigger words.
 	// Strip "bitsbot" prefix off text:
-	text := strings.Trim(formValues["text"], " \t\n")
+	text := strings.Trim(msg.Text, " \t\n")
 	if strings.HasPrefix(text, "bitsbot") {
 		text = strings.TrimLeft(text[len("bitsbot"):], " :\t\n")
 	}
@@ -172,7 +182,7 @@ func handleChatMessage(formValues map[string]string) (jsonResponse interface{}, 
 	// Text is HTML encoded otherwise.
 
 	// Debug tool for user "jdunne":
-	if strings.HasPrefix(text, "json=") && formValues["user_id"] == "U03PV154T" {
+	if strings.HasPrefix(text, "json=") && msg.UserID == "U03PV154T" {
 		// Remove angle brackets around URLs:
 		text = strings.Replace(text, "<", "", -1)
 		text = strings.Replace(text, ">", "", -1)
@@ -246,7 +256,7 @@ otherwise:
 
 		// Initialize a pseudo-random source:
 		timestamp := int64(0)
-		timestamp_float, err := strconv.ParseFloat(formValues["timestamp"], 64)
+		timestamp_float, err := strconv.ParseFloat(msg.Timestamp, 64)
 		if err != nil {
 			timestamp = time.Now().UnixNano()
 		} else {
@@ -259,7 +269,7 @@ otherwise:
 	}
 
 	if img == nil {
-		return jsonReplyText(fmt.Sprintf("Sorry, %s, no match for '%s'.", formValues["user_name"], text)), nil
+		return jsonReplyText(fmt.Sprintf("Sorry, %s, no match for '%s'.", msg.UserName, text)), nil
 	}
 
 	log.Printf("  winner: %s: %s\n", img.Base62ID, img.Title)

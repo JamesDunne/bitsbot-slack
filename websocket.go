@@ -60,11 +60,17 @@ func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 	switch msgType {
 	// Handle chat message:
 	case "message":
-		channel_id := msg["channel"]
-		user_id := msg["user"]
-		text := msg["text"]
+		slackMessage := &SlackInMessage{
+			UserID:    msg["user"].(string),
+			ChannelID: msg["channel"].(string),
+			Text:      msg["text"].(string),
+			Timestamp: msg["ts"].(string),
+		}
+		slackMessage.UserName = ""
+		slackMessage.ChannelName = ""
 
-		log.Printf("  #%s <%s>: %s\n", channel_id, user_id, text)
+		log.Printf("  #%s <%s>: %s\n", slackMessage.ChannelID, slackMessage.UserID, slackMessage.Text)
+		botHandleMessage(slackMessage)
 		break
 
 	// Ignore these kinds:

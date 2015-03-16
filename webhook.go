@@ -52,8 +52,18 @@ func processRequest(rsp http.ResponseWriter, req *http.Request) *web.Error {
 		formValues["text"],
 	)
 
+	// Convert formValues into SlackInMessage:
+	slackMessage := &SlackInMessage{
+		UserID:      formValues["user_id"],
+		UserName:    user_name,
+		ChannelID:   formValues["channel_id"],
+		ChannelName: formValues["channel_name"],
+		Text:        formValues["text"],
+		Timestamp:   formValues["timestamp"],
+	}
+
 	// Handle the chat message:
-	jsonResponse, werr := handleChatMessage(formValues)
+	jsonResponse, werr := botHandleMessage(slackMessage)
 	if werr != nil {
 		return werr
 	}
