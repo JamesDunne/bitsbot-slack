@@ -14,14 +14,14 @@ import "golang.org/x/net/websocket"
 type BotConnection struct {
 	ws        *websocket.Conn
 	die       chan bool
-	waitGroup sync.WaitGroup
+	waitGroup *sync.WaitGroup
 }
 
-// Send a ping every 30 seconds to avoid EOF after 1 minute.
+// Send a ping every 10 seconds to avoid EOFs.
 func (bc *BotConnection) pingpong() {
 	defer bc.waitGroup.Done()
 
-	ticker := time.Tick(time.Second * 30)
+	ticker := time.Tick(time.Second * 10)
 
 	alive := true
 	for alive {
@@ -32,12 +32,14 @@ func (bc *BotConnection) pingpong() {
 			}{
 				Type: "ping",
 			}
+			log.Println("pingpong: send ping")
 			err := websocket.JSON.Send(bc.ws, &ping)
 			if err != nil {
 				log.Println(err)
 			}
 			break
 		case <-bc.die:
+			log.Println("pingpong: dying")
 			alive = false
 			break
 		}
@@ -46,8 +48,11 @@ func (bc *BotConnection) pingpong() {
 
 // Read incoming messages:
 func (bc *BotConnection) readIncomingMessages() {
-	defer func() { bc.die <- true }()
-	defer bc.waitGroup.Done()
+	defer func() {
+		log.Println("incoming: dying")
+		bc.die <- true
+		bc.waitGroup.Done()
+	}()
 
 	// Handle incoming messages:
 	for {
@@ -118,7 +123,8 @@ func watchdog() {
 		log.Println("Connected to Slack websocket.")
 
 		bc := &BotConnection{
-			ws: ws,
+			ws:        ws,
+			waitGroup: new(sync.WaitGroup),
 		}
 
 		bc.waitGroup.Add(2)
