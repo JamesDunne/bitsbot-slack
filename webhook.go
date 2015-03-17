@@ -1,3 +1,6 @@
+// Unused. This was the previous main function that started a webhook listening server.
+// Websockets and Slack's RTM API are used now. See websockets.go
+
 package main
 
 import (

@@ -48,24 +48,33 @@ func (bc *BotConnection) pingpong() {
 		bc.waitGroup.Done()
 	}()
 
+	// Send first ping to avoid early EOF:
+	ping := struct {
+		Type string `json:"type"`
+	}{
+		Type: "ping",
+	}
+	err := websocket.JSON.Send(bc.ws, &ping)
+	if err != nil {
+		log.Printf("  pingpong: JSON send error: %s\n", err)
+	}
+
+	// Start a timer to tick every 15 seconds:
 	ticker := time.Tick(time.Second * 15)
 
 	alive := true
 	for alive {
+		// Wait on either the timer tick or the `die` channel:
 		select {
 		case _ = <-ticker:
-			ping := struct {
-				Type string `json:"type"`
-			}{
-				Type: "ping",
-			}
 			//log.Println("  pingpong: ping")
-
-			err := websocket.JSON.Send(bc.ws, &ping)
+			err = websocket.JSON.Send(bc.ws, &ping)
 			if err != nil {
 				log.Printf("  pingpong: JSON send error: %s\n", err)
 				break
 			}
+			// NOTE: `readIncomingMessages` will read the "pong" response.
+			// Cannot issue a read here because a read is already blocking there.
 			break
 		case _ = <-bc.die:
 			alive = false
@@ -198,7 +207,7 @@ func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 		inmsg.UserName = bc.resolveUserName(inmsg.UserID)
 		inmsg.ChannelName = bc.resolveChannelName(inmsg.ChannelID)
 
-		log.Printf("  #%s (%s) <%s (%s)>::  %s\n",
+		log.Printf("#%s (%s) <%s (%s)>::  %s\n",
 			inmsg.ChannelName, inmsg.ChannelID,
 			inmsg.UserName, inmsg.UserID,
 			inmsg.Text,
@@ -229,6 +238,7 @@ func (bc *BotConnection) handleMessage(wsInMessage *wsInMessage) {
 				}
 				params["attachments"] = string(b)
 			}
+			// NOTE(jsd): RTM API does not allow formatted messages or attachments yet.
 			_, err := slackAPI("chat.postMessage", params)
 			if err != nil {
 				log.Printf("  incoming: chat.postMessage error: %s\n", err)

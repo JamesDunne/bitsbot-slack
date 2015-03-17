@@ -205,7 +205,6 @@ func botHandleMessage(msg *SlackInMessage) (*SlackOutMessage, *web.Error) {
 	if len(winners) == 0 {
 		log.Printf("  No match!\n")
 	} else if len(winners) == 1 {
-		log.Printf("  Single match!\n")
 		img = winners[0]
 	} else {
 		log.Printf("  %d winners; randomly selecting a winner\n", len(winners))
