@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -31,9 +32,10 @@ type ImageViewModel struct {
 	IsClean        bool    `json:"isClean"`
 }
 
-func queryBit() (list []*ImageViewModel, err error) {
+func searchBit(keywords []string) (list []*ImageViewModel, err error) {
 	// Query i.bittwiddlers.org
-	breq, err := http.NewRequest("GET", "https://i.bittwiddlers.org/api/v1/all", nil)
+	requrl := "https://i.bittwiddlers.org/api/v1/search/all?q=" + url.QueryEscape(strings.Join(keywords, " "))
+	breq, err := http.NewRequest("GET", requrl, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -70,112 +72,24 @@ func queryBit() (list []*ImageViewModel, err error) {
 	return list, err
 }
 
-func keywordMatch(text string, list []*ImageViewModel) (winners []*ImageViewModel) {
-	// No keywords means match all:
-	if text == "" {
-		return list
-	}
-
-	// Runes used to split words:
-	const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
-
-	// Search by keyword:
-	keywords := strings.FieldsFunc(
-		strings.ToLower(text),
-		func(c rune) bool { return strings.ContainsRune(wordSplitters, c) },
-	)
-	log.Printf("  keywords: %v\n", keywords)
-
-	highest := -1
-	highest_idxs := make([]int, 0, 20)
-	for idx, img := range list {
-		titleLower := strings.ToLower(img.Title)
-
-		words := strings.FieldsFunc(
-			titleLower,
-			func(c rune) bool { return strings.ContainsRune(wordSplitters, c) },
-		)
-
-		h := -2
-
-		// Add points for each keyword match:
-		last_word_idx := -1
-		// TODO(jsd): Don't count single-word matches on useless filler words like articles; only count them if in a phrase.
-		// TODO(jsd): Prefer to match all keywords.
-		for _, keyword := range keywords {
-			found := false
-			for word_idx, word := range words {
-				if word == keyword {
-					found = true
-
-					if last_word_idx > -1 {
-						if word_idx > last_word_idx+1 {
-							// Penalize distance (word count) from last word found (helps phrases match better):
-							h -= ((word_idx - last_word_idx) + 1)
-						}
-					}
-
-					h += 10
-					h = (h * 20) / 16
-					last_word_idx = word_idx
-
-					// Only trigger once per keyword:
-					break
-				}
-			}
-
-			// All keywords are required to match:
-			if !found {
-				h = -2
-				break
-			}
-		}
-
-		if h > -2 {
-			log.Printf("  %4d %s\n", h, img.Title)
-
-			if h > highest {
-				highest = h
-				// Build a new list of winners at this index:
-				highest_idxs = highest_idxs[:0]
-				highest_idxs = append(highest_idxs, idx)
-			} else if h == highest {
-				// Add to the winning pool:
-				highest_idxs = append(highest_idxs, idx)
-			}
-		}
-	}
-
-	winners = make([]*ImageViewModel, 0, len(highest_idxs))
-	for _, idx := range highest_idxs {
-		winners = append(winners, list[idx])
-	}
-	return
-}
-
 func textReply(text string) *SlackOutMessage {
 	return &SlackOutMessage{
 		Text: text,
 	}
 }
 
+// Runes used to split words:
+const wordSplitters = " \n\t:,;.-+=[]!?()$%^&*<>\"`"
+
+// Split a string into separate words:
+func splitToWords(text string) []string {
+	return strings.FieldsFunc(
+		text,
+		func(c rune) bool { return strings.ContainsRune(wordSplitters, c) },
+	)
+}
+
 func botHandleMessage(msg *SlackInMessage) (*SlackOutMessage, *web.Error) {
-	// Query i.bittwiddlers.org for the list of images:
-	list, err := queryBit()
-	if err != nil {
-		log.Printf("bittwiddlers query ERROR: %s\n", err)
-		return nil, nil
-	}
-
-	// Filter list into images only; no youtube or gifv:
-	img_list := make([]*ImageViewModel, 0, len(list))
-	for _, img := range list {
-		if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
-			continue
-		}
-		img_list = append(img_list, img)
-	}
-
 	text := msg.Text
 
 	// -list prefix will list best matches instead of randomly selecting one:
@@ -185,8 +99,22 @@ func botHandleMessage(msg *SlackInMessage) (*SlackOutMessage, *web.Error) {
 		text = strings.TrimLeft(text[len("-list"):], " :\t\n")
 	}
 
-	// Keyword search through image titles and find best matches:
-	winners := keywordMatch(text, img_list)
+	// Query i.bittwiddlers.org for the list of images:
+	keywords := splitToWords(text)
+	list, err := searchBit(keywords)
+	if err != nil {
+		log.Printf("bittwiddlers search ERROR: %s\n", err)
+		return nil, nil
+	}
+
+	// Filter list into images only; no youtube or gifv:
+	winners := make([]*ImageViewModel, 0, len(list))
+	for _, img := range list {
+		if img.Kind != "gif" && img.Kind != "jpeg" && img.Kind != "png" {
+			continue
+		}
+		winners = append(winners, img)
+	}
 
 	if do_list {
 		out := new(bytes.Buffer)
